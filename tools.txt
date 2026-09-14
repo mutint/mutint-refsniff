@@ -1,0 +1,8 @@
+# Conda package specs, one per line, collected by the entry script and installed into
+# env/tools with micromamba. See mutint-core/tools.txt for the contract.
+#
+# None. The one service this plugin asks is NCBI BLAST over its URL API, and the client is
+# the standard library. BBTools' sendsketch was here for a while as a fast first step; it
+# went because it saved no NCBI searches and, on a few hundred reads, could not separate
+# strains that BLAST's per-read votes could -- so it cost a JDK in every install for a
+# second opinion the page did not need.

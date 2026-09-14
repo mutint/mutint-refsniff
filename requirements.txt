@@ -1,0 +1,8 @@
+# Install mutint-core dependencies first:
+#   pip install -r mutint-core/requirements.txt
+#
+# mutint-refsniff-specific additions (if any):
+#
+# None. The plugin talks to NCBI's BLAST URL API with the standard library's urllib --
+# deliberately, so the client is a few functions with an injectable transport rather than
+# a dependency with its own opinions about retries and sessions.

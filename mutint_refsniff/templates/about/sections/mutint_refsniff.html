@@ -1,0 +1,8 @@
+<p><b>Identify a reference genome from reads.</b> A tab on the Import data page, offered while
+    an experiment has no reference: drop one FASTQ, and the first few hundred reads are sent to
+    NCBI BLAST and searched against RefSeq bacterial and archaeal genomes. The answer is a table
+    of the closest genomes &mdash; accession, how many reads chose each, their identity &mdash;
+    and the top one can be imported as the experiment's reference with one click.</p>
+<p>The work runs on the task queue, one run per experiment at a time, and stays within NCBI's
+    limits on automated searches. Nothing is installed for it: the client is the standard
+    library.</p>
