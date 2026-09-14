@@ -140,6 +140,14 @@ def run_refsniff(context, run_id):
             _fail(run, "This run's reads are no longer on disk. Launch it again.")
             raise RuntimeError("run %s has no reads" % run.pk)
 
+        # Before the tool, not after: a reader scrolling a failed-looking log should meet the
+        # explanation above the traceback it explains. Says nothing when there is nothing to
+        # explain -- see `sketch.truncation_note`.
+        note = sketch.truncation_note(run.read_file, os.path.getsize(run.reads_path()),
+                                      fastq.HEAD_BYTES)
+        if note:
+            logs.write(log, note)
+
         argv = sketch.build_argv(sendsketch, run.reads_path(), run.sketch_path())
         try:
             returncode = processes.run_tool(

@@ -3,11 +3,12 @@
 import gzip
 import os
 import subprocess
+from unittest import mock
 
 from mutint_common import store
 from mutint_jobs import logs, processes
 
-from mutint_refsniff import fastq
+from mutint_refsniff import fastq, tasks
 from mutint_refsniff.models import STATUS_FAILED, STATUS_FINISHED, RefsniffRun
 from mutint_refsniff.tests import fake_http, fake_sketch
 from mutint_refsniff.tests.fixture import RefsniffFixture
@@ -67,6 +68,31 @@ class RunTestCase(RefsniffFixture):
         self.assertIn("3 genomes matched", text)
         self.assertIn("Sketched 135798 reads", run.log)
         self.assertFalse(os.path.exists(run.directory()))
+
+    def test_a_head_at_the_limit_explains_the_zlib_traceback_before_it_happens(self):
+        """sendsketch prints an EOFException for a gzip cut at 16 MB and exits 0. The log has
+        to say so, above it, or a perfectly good run reads as a broken one.
+
+        `HEAD_BYTES` is patched rather than staging 16 MB: what is being tested is the rule,
+        and a real head would make this test take a second and the file a megabyte."""
+        with mock.patch.object(tasks.fastq, "HEAD_BYTES", 50), \
+                fake_sketch.patched(), \
+                fake_http.patched(assemblies=fake_sketch.ASSEMBLIES):
+            response = self.launch(self.stage(name="reads.fastq.gz").id)
+        self.assertEqual(200, response.status_code, response.content)
+        run = RefsniffRun.objects.get()
+
+        text, _ = logs.read_tail(run.task_result_id)
+        self.assertIn("EOFException", text)
+        self.assertIn("not a failure", text)
+        # Above the tool's own output, which is the whole point of writing it first.
+        self.assertLess(text.index("EOFException"), text.index("Sketched"))
+
+    def test_a_head_under_the_limit_says_nothing_about_truncation(self):
+        run, _run_tool = self._run()
+        text, _ = logs.read_tail(run.task_result_id)
+        self.assertNotIn("EOFException", text)
+        self.assertNotIn("cut off", text)
 
     def test_a_sketch_that_matched_nothing_is_a_finished_run_with_a_note(self):
         run, _run_tool = self._run(text='{"Name": "x", "Seqs": 3, "Bases": 30}')

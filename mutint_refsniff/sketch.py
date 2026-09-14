@@ -136,6 +136,34 @@ def build_argv(sendsketch, reads_path, out_path, records=RECORDS, heap=HEAP):
             'printname0=t', 'printtaxa=t', 'out=%s' % out_path]
 
 
+def truncation_note(read_file, size, limit):
+    """Why sendsketch is about to print a ZLIB traceback, or `''` when it is not.
+
+    **The traceback is the expected case, and looks exactly like a failure.** Only the first
+    `limit` bytes of the reads are ever taken -- the page uploads that much of a drop, and the
+    task fetches that much of an ENA file -- so the last gzip block is cut off mid-stream.
+    sendsketch loads every whole record before the cut, prints
+    `java.io.EOFException: Unexpected end of ZLIB input stream` about the rest, and exits 0.
+    The returncode is what the task reads; this is what the *person* reads, and without it a
+    perfectly good run looks broken.
+
+    It cannot be suppressed at the source: `run_tool` hands the tool the log's file descriptor
+    rather than a pipe, which is what makes a running job's output visible at all, so those
+    bytes never pass through any code of ours. Explaining beats filtering.
+
+    Two conditions, and both matter. **Gzipped**, because a plain FASTQ cut mid-record raises
+    nothing -- `fastq._records` simply stops, and the tool loses one read. **At the limit**,
+    because a file smaller than that arrived whole and there is nothing to explain; saying so
+    anyway would teach a reader to ignore the line.
+    """
+    if not read_file.lower().endswith('.gz') or size < limit:
+        return ''
+    return ('Only the first %d MB of %s was taken, so its last gzip block is cut off. '
+            'sendsketch reports "java.io.EOFException: Unexpected end of ZLIB input stream" '
+            'for that and carries on with the reads it did load; it is expected here, not a '
+            'failure.' % (limit // (1024 * 1024), read_file))
+
+
 def _split_seq_name(seq_name):
     """`tid|413997|NC_012967.1 Escherichia coli B str. REL606, complete genome` ->
     `('NC_012967.1', 'Escherichia coli B str. REL606, complete genome')`.

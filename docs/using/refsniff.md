@@ -54,8 +54,9 @@ Each finished run shows a table of the genomes the sketch matched, best first:
   assembly, the single sequence the sketch matched is shown instead.
 
 A **log** link on each run opens what the run reported, while it is still running. It usually
-contains a `java.io.EOFException: Unexpected end of ZLIB input stream` -- that is expected,
-not a failure: only the first 16 MB of the file is read, so its last gzip block is cut short.
+contains a `java.io.EOFException: Unexpected end of ZLIB input stream`, with a line above it
+saying why: only the first 16 MB of the file is read, so its last gzip block is cut short. The
+search carries on with every read before the cut, and the run is not affected.
 
 ## Using the answer
 

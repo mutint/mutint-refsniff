@@ -94,6 +94,38 @@ class ParseTestCase(SimpleTestCase):
         self.assertEqual((5, 50), (result["reads"], result["bases"]))
 
 
+class TruncationNoteTestCase(SimpleTestCase):
+    """The sentence that keeps an expected ZLIB traceback from reading as a failure.
+
+    It cannot be suppressed -- `run_tool` gives the tool the log's descriptor, not a pipe --
+    so what is asserted is that it is said, and said only when it is true.
+    """
+
+    LIMIT = 16 * 1024 * 1024
+
+    def test_a_gzip_at_the_limit_is_explained(self):
+        note = sketch.truncation_note("SRR1_1.fastq.gz", self.LIMIT, self.LIMIT)
+        self.assertIn("16 MB", note)
+        self.assertIn("SRR1_1.fastq.gz", note)
+        self.assertIn("EOFException", note)
+        self.assertIn("not a", note)
+
+    def test_a_gzip_under_the_limit_is_whole_and_says_nothing(self):
+        self.assertEqual("", sketch.truncation_note("small.fastq.gz", 1024, self.LIMIT))
+
+    def test_a_plain_fastq_at_the_limit_says_nothing(self):
+        """Cut mid-record it loses one read and raises nothing; there is no traceback to
+        explain, and explaining one anyway teaches a reader to skip the line."""
+        self.assertEqual("", sketch.truncation_note("reads.fastq", self.LIMIT, self.LIMIT))
+
+    def test_the_suffix_test_is_case_insensitive(self):
+        self.assertNotEqual("", sketch.truncation_note("R1.FASTQ.GZ", self.LIMIT, self.LIMIT))
+
+    def test_over_the_limit_counts_as_at_it(self):
+        """`>=`, not `==`: nothing guarantees the stored head is exactly the cap."""
+        self.assertNotEqual("", sketch.truncation_note("a.fq.gz", self.LIMIT + 5, self.LIMIT))
+
+
 class ImportAccessionTestCase(SimpleTestCase):
     def test_the_assembly_wins(self):
         self.assertEqual("GCF_1", sketch.import_accession(

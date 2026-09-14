@@ -116,9 +116,23 @@ and the run is exit 0.
 The head is `file.slice(0, 16 MiB)` or a `Range` fetch, so its last gzip member has no
 footer. sendsketch loads every whole record before the cut, prints
 `java.io.EOFException: Unexpected end of ZLIB input stream`, and **exits 0**. The returncode
-is what the task reads; that traceback in a log is not a failure, and a future reader finding
-it there should not go looking for a bug. Measured: 135 798 reads loaded from a real 16 MiB
-head.
+is what the task reads; that traceback in a log is not a failure. Measured: 135 798 reads
+loaded from a real 16 MiB head.
+
+**And the log says so, above it.** A stack trace in the middle of a job log reads as a broken
+run to anyone who has not been told otherwise, and being told in this file is no use to
+somebody looking at `/jobs/<pk>/log`. `sketch.truncation_note` is the sentence and
+`tasks.run_refsniff` writes it **before** `run_tool`, so a reader meets the explanation first.
+
+It cannot be suppressed at the source, and that is worth knowing before anybody tries:
+`processes.run_tool` hands the tool the log file's *descriptor* rather than a pipe -- which is
+the whole reason a running job's output is visible at all -- so those bytes never pass through
+any code of ours. Explaining beats filtering, and filtering would cost the live log.
+
+Two conditions on the note, and both earn their place. **Gzipped**, because a plain FASTQ cut
+mid-record raises nothing: `fastq._records` stops and the tool loses one read. **At the
+limit**, because a smaller file arrived whole -- saying it anyway would teach a reader to skip
+the line, which is exactly what it exists to stop them doing.
 
 ### A hit names a sequence; a reference wants an assembly
 
@@ -236,7 +250,7 @@ core's answers, and the genome arrives exactly as a typed accession would.
 
 ## Tests
 
-96 tests. Once the plugin is a submodule of `mutint`:
+103 tests. Once the plugin is a submodule of `mutint`:
 
 ```bash
 cd mutint && ./mutint test mutint_refsniff
