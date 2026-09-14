@@ -1,8 +1,8 @@
 /* The Identify Reference from Reads tab: the drop zone, the launch, and the run list.
  *
- * Lifted from mutint-breseq's launch.js and cut down: one file, two boxes, no name to
- * derive. The two values it needs arrive through a `json_script` element, so nothing here
- * needs the template engine. The uploader, the JSON poster and the confirm dialog are
+ * Lifted from mutint-breseq's launch.js and cut down: one file or one accession, and no
+ * name to derive. The few values it needs arrive through a `json_script` element, so nothing
+ * here needs the template engine. The uploader, the JSON poster and the confirm dialog are
  * core's, loaded from base.html.
  */
 (function () {
@@ -46,10 +46,6 @@
         return rest + "s";
     }
 
-    function pct(value) {
-        return value === null || value === undefined ? "" : Number(value).toFixed(2) + "%";
-    }
-
     // A row that says "queued" is either a job waiting its turn or a job nothing will ever
     // pick up; where the queue can tell us, it does.
     function statusLabel(run) {
@@ -73,45 +69,71 @@
         return '<span class="label label-default">Queued</span>' + note;
     }
 
-    function blastTable(run) {
-        var hits = run.blast_hits || [];
-        var head = "<p style=\"margin-bottom: 0.3em;\"><small>RefSeq bacterial and " +
-                   "archaeal genomes";
-        if (run.blast_rid) {
-            head += ", NCBI search <a href=\"https://blast.ncbi.nlm.nih.gov/Blast.cgi?CMD=Get&RID=" +
-                    esc(run.blast_rid) + "\" target=\"_blank\" rel=\"noopener\">" +
-                    esc(run.blast_rid) + "</a>";
+    function num(value, digits) {
+        return value === null || value === undefined
+            ? "" : Number(value).toFixed(digits === undefined ? 2 : digits);
+    }
+
+    // The genome column: the assembly when one was found, because that is what "Use as
+    // reference" imports and what resolves to a chromosome *and* its plasmids. Failing that
+    // the nucleotide accession the sketch matched, which for a draft is one contig of many
+    // -- said so, since importing it would be wrong.
+    function genomeCell(hit) {
+        if (hit.assembly) {
+            return '<a href="https://www.ncbi.nlm.nih.gov/datasets/genome/' +
+                   esc(hit.assembly) + '" target="_blank" rel="noopener">' +
+                   esc(hit.assembly) + "</a>";
         }
+        var nuccore = '<a href="https://www.ncbi.nlm.nih.gov/nuccore/' + esc(hit.accession) +
+                      '" target="_blank" rel="noopener">' + esc(hit.accession) + "</a>";
+        if (hit.draft) {
+            return nuccore + ' <small style="color: #a94442;">one contig of a draft</small>';
+        }
+        return nuccore;
+    }
+
+    function hitsTable(run) {
+        var hits = run.hits || [];
+        var head = '<p style="margin-bottom: 0.3em;"><small>RefSeq sketch server, ' +
+                   esc(run.reads_sketched) + " reads sketched";
         if (run.note) { head += " &mdash; " + esc(run.note); }
         head += "</small></p>";
         if (!hits.length) { return head; }
         var html = [head, '<table class="table table-condensed" style="margin-bottom: 1em;">',
-                    "<thead><tr><th>Organism</th><th>Accession</th><th>Reads</th>",
-                    "<th>Identity</th><th></th></tr></thead><tbody>"];
-        hits.forEach(function (hit, index) {
-            var reads = hit.reads + " of " + run.reads_sampled;
+                    "<thead><tr><th>Organism</th><th>ANI</th><th>Complete</th>",
+                    "<th>Contam.</th><th>Genome</th><th></th></tr></thead><tbody>"];
+        hits.forEach(function (hit) {
             var action = "";
-            if (index === 0 && run.status === "finished" && form) {
+            if (hit.import_accession && run.status === "finished" && form) {
                 action = '<button type="button" class="btn btn-primary btn-xs refsniff-use" ' +
-                         'data-accession="' + esc(hit.accession) + '" data-organism="' +
-                         esc(hit.organism) + '"' + (importing ? " disabled" : "") +
+                         'data-accession="' + esc(hit.import_accession) + '" data-organism="' +
+                         esc(hit.name) + '"' + (importing ? " disabled" : "") +
                          ">Use as reference</button>";
             }
-            html.push("<tr><td title=\"" + esc(hit.title) + "\">" + esc(hit.organism) +
-                      "</td><td><a href=\"https://www.ncbi.nlm.nih.gov/nuccore/" +
-                      esc(hit.accession) + "\" target=\"_blank\" rel=\"noopener\">" +
-                      esc(hit.accession) + "</a></td><td>" + esc(reads) + "</td><td>" +
-                      esc(pct(hit.mean_identity)) + "</td><td>" + action + "</td></tr>");
+            html.push("<tr><td title=\"" + esc(hit.title) + "\">" + esc(hit.name) +
+                      "</td><td>" + esc(num(hit.ani)) + "%</td><td>" +
+                      esc(num(hit.completeness, 1)) + "%</td><td>" +
+                      esc(num(hit.contamination, 1)) + "%</td><td>" + genomeCell(hit) +
+                      "</td><td>" + action + "</td></tr>");
         });
         html.push("</tbody></table>");
         return html.join("");
     }
 
+    // A run named by accession is headed by the accession, linked to ENA's page for it,
+    // with the file it resolved to beside it; a drop is headed by the file.
+    function runTitle(run) {
+        if (!run.accession) { return "<b>" + esc(run.read_file) + "</b>"; }
+        return '<b><a href="' + esc(run.accession_url) + '" target="_blank" ' +
+               'rel="noopener">' + esc(run.accession) + "</a></b> " +
+               '<small style="color: #666;">' + esc(run.read_file) + "</small>";
+    }
+
     function runBlock(run) {
         var html = ['<div class="panel panel-default"><div class="panel-heading">',
-                    "<b>" + esc(run.read_file) + "</b> &nbsp;" + statusLabel(run),
-                    ' <small style="color: #666;">&middot; ' + esc(run.reads_sampled) +
-                    " reads sampled &middot; " + esc(whenLocal(run.started_at || run.created_at)) +
+                    runTitle(run) + " &nbsp;" + statusLabel(run),
+                    ' <small style="color: #666;">&middot; ' + esc(run.reads_sketched) +
+                    " reads sketched &middot; " + esc(whenLocal(run.started_at || run.created_at)) +
                     (elapsed(run) ? " &middot; " + esc(elapsed(run)) : "") + "</small>"];
         var links = [];
         if (run.log_url) {
@@ -129,7 +151,7 @@
         if (run.error) {
             html.push('<p style="color: #a94442;">' + esc(run.error) + "</p>");
         }
-        if (run.status === "finished") { html.push(blastTable(run)); }
+        if (run.status === "finished") { html.push(hitsTable(run)); }
         if (run.log && run.status === "failed") {
             html.push('<details><summary style="cursor: pointer; color: #666;">' +
                       "<small>run output</small></summary>" +
@@ -216,8 +238,9 @@
         window.mutintConfirm(
             "Use " + accession + " as the reference?",
             organism + " (" + accession + ") will be downloaded from NCBI and become this " +
-            "experiment's reference genome. The tab you are on will then close, because " +
-            "there is nothing left for it to identify.",
+            "experiment's reference genome \u2014 every sequence the assembly is made of, " +
+            "its plasmids included. The tab you are on will then close, because there is " +
+            "nothing left for it to identify.",
             "Import reference"
         ).then(function (go) {
             if (!go) { return; }
@@ -272,8 +295,7 @@
     var fileListEl = document.getElementById("refsniff-file-list");
     var submitBtn = document.getElementById("refsniff-submit");
     var resetBtn = document.getElementById("refsniff-reset");
-    var readsInput = document.getElementById("refsniff-reads");
-    var emailInput = document.getElementById("refsniff-email");
+    var accessionInput = document.getElementById("refsniff-accession");
     var progressEl = document.getElementById("refsniff-progress");
     var progressBar = document.getElementById("refsniff-progress-bar");
     var progressText = document.getElementById("refsniff-progress-text");
@@ -281,12 +303,17 @@
 
     // One run at a time per experiment: the server refuses a second with a 409, and the
     // button says so first rather than letting somebody upload 16 MB to be told.
+    function accessionText() {
+        return accessionInput.value.trim();
+    }
+
     function syncBusy() {
         if (!form) { return; }
         var busy = anyUnfinished(runsData);
-        submitBtn.disabled = uploading || busy || !selected;
+        submitBtn.disabled = uploading || busy || !(selected || accessionText());
         submitBtn.title = busy ? "A run is already in progress for this experiment." : "";
     }
+    accessionInput.addEventListener("input", syncBusy);
 
     function isFastqName(name) {
         var lower = name.toLowerCase();
@@ -296,7 +323,7 @@
     }
 
     function renderList() {
-        if (resetBtn) { resetBtn.disabled = uploading || !selected; }
+        if (resetBtn) { resetBtn.disabled = uploading || !(selected || accessionText()); }
         syncBusy();
         if (!selected) { fileListEl.innerHTML = ""; return; }
         var size = selected.file.size;
@@ -327,6 +354,7 @@
     function resetSelection() {
         if (uploading) { return; }
         selected = null;
+        accessionInput.value = "";
         errorEl.innerHTML = "";
         renderList();
     }
@@ -364,43 +392,50 @@
         mutintCollectDropped(e.dataTransfer).then(addEntries);
     });
 
+    // Both ways in post to the same endpoint; only which field is filled differs, and
+    // the server refuses a body naming both.
+    function postLaunch(uploadId) {
+        return mutintPostJson("/refsniff/launch?experiment_id=" + EXPERIMENT_ID, {
+            upload_id: uploadId || "",
+            accession: uploadId ? "" : accessionText()
+        });
+    }
+
     form.addEventListener("submit", function (e) {
         e.preventDefault();
-        if (!selected || uploading) { return; }
+        if (uploading || !(selected || accessionText())) { return; }
         errorEl.innerHTML = "";
-        if (!readsInput.checkValidity()) {
-            renderError("Reads to sample has to be a whole number between " +
-                        CONFIG.reads_min + " and " + CONFIG.reads_max + ".");
-            readsInput.focus();
-            return;
-        }
-        if (!emailInput.value.trim() || !emailInput.checkValidity()) {
-            renderError("NCBI asks for a contact email with every search.");
-            emailInput.focus();
+        if (selected && accessionText()) {
+            renderError("Drop a file or type an accession, not both.");
+            accessionInput.focus();
             return;
         }
         uploading = true;
         renderList();
-        setProgress(0, 1, "Preparing…");
-        mutintUpload([selected], {
-            experimentId: EXPERIMENT_ID,
-            consumer: COMPONENT,
-            onProgress: setProgress
-        }).then(function (uploadId) {
-            setProgress(1, 1, "Sampling the reads and queueing the run…");
-            return mutintPostJson("/refsniff/launch?experiment_id=" + EXPERIMENT_ID, {
-                upload_id: uploadId,
-                reads: readsInput.value,
-                email: emailInput.value.trim()
+        var started;
+        if (selected) {
+            setProgress(0, 1, "Preparing…");
+            started = mutintUpload([selected], {
+                experimentId: EXPERIMENT_ID,
+                consumer: COMPONENT,
+                onProgress: setProgress
+            }).then(function (uploadId) {
+                setProgress(1, 1, "Queueing the run…");
+                return postLaunch(uploadId);
             });
-        }).then(function (body) {
+        } else {
+            setProgress(1, 1, "Asking ENA about the accession and queueing the run…");
+            started = postLaunch("");
+        }
+        started.then(function (body) {
             progressEl.style.display = "none";
             selected = null;
+            accessionInput.value = "";
             refresh(body.runs || []);
         }).catch(function (err) {
             progressEl.style.display = "none";
             renderError(err.message || String(err));
-            if (err.body && err.body.field === "email") { emailInput.focus(); }
+            if (err.body && err.body.field === "accession") { accessionInput.focus(); }
         }).then(function () {
             uploading = false;
             renderList();

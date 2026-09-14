@@ -7,9 +7,8 @@ Bootstrap posting to a `@require_POST` JSON endpoint through `mutintPostJson`.
 import json
 import logging
 import os
+import shutil
 
-from django.core.exceptions import ValidationError
-from django.core.validators import validate_email
 from django.http import JsonResponse
 from django.shortcuts import render
 from django.views.decorators.csrf import ensure_csrf_cookie
@@ -20,11 +19,12 @@ from mutint_common import store
 from mutint_common.util import get_user_context
 from mutint_experiment.models import Experiment
 from mutint_experiment.permissions import can_edit_experiment, experiment_lock_refusal
-from mutint_import import reference_store, staging
+from mutint_import import reference_store, sra_fetch, staging
+from mutint_import.accessions import AccessionError
 from mutint_import.upload_session import UploadError
 from mutint_jobs import jobs as jobs_api
 
-from mutint_refsniff import blast, fastq, tasks
+from mutint_refsniff import ena, fastq, sketch, tasks
 from mutint_refsniff.models import (
     COMPONENT,
     STATUS_QUEUED,
@@ -34,10 +34,7 @@ from mutint_refsniff.models import (
 
 logger = logging.getLogger("mutint_refsniff.views")
 
-#: How much of the dropped file the page uploads. Only the first few hundred records are
-#: wanted, and a FASTQ can be gigabytes; 16 MiB holds a thousand reads of any length that
-#: exists, compressed or not, with room over.
-HEAD_BYTES = 16 * 1024 * 1024
+HEAD_BYTES = fastq.HEAD_BYTES
 
 
 def _experiment_or_none(request):
@@ -73,13 +70,12 @@ def _run_rows(experiment):
         rows.append({
             "id": run.pk,
             "read_file": run.read_file,
-            "reads_requested": run.reads_requested,
-            "reads_sampled": run.reads_sampled,
-            "bases_sampled": run.bases_sampled,
-            "contact_email": run.contact_email,
+            "accession": run.accession,
+            "accession_url": run.accession_url(),
+            "reads_sketched": run.reads_sketched,
+            "bases_sketched": run.bases_sketched,
             "note": run.note,
-            "blast_rid": run.blast_rid,
-            "blast_hits": run.blast_hits or [],
+            "hits": run.hits or [],
             "best_accession": run.best_accession,
             "best_organism": run.best_organism,
             "status": run.status,
@@ -96,7 +92,7 @@ def _run_rows(experiment):
 
 @ensure_csrf_cookie
 def refsniff(request):
-    """The tab: drop a FASTQ, sample its reads, find the nearest genome. Lists the runs.
+    """The tab: drop a FASTQ, sketch it, find the nearest genome. Lists the runs.
 
     Signed in first, then the experiment, as mutint-breseq's page does: the launch creates
     data, and a signed-out visitor is told that rather than being sent to a page about an
@@ -112,6 +108,10 @@ def refsniff(request):
         return mutint_sample.views.common.no_experiment_selected(
             request, context, logger, "refsniff")
 
+    # Said on the page rather than only at launch: the tool is a conda package, and a
+    # deployment that has not installed it should learn so before uploading 16 MB.
+    tool_available, tool_missing = sketch.available()
+
     context.update(experiment.experiment_context())
     context.update({
         "experiment": experiment,
@@ -122,17 +122,13 @@ def refsniff(request):
         "has_reference": reference_store.has_reference(experiment),
         "can_launch": can_edit_experiment(request.user, experiment),
         "lock_refusal": experiment_lock_refusal(experiment),
-        # Prefilled from the account, which is where a person changes it for good; the
-        # deployment's address is the fallback for an account that has none.
-        "contact_email": request.user.email or blast.default_email(),
+        "tool_available": tool_available,
+        "tool_missing": tool_missing,
         "busy": _active_run(experiment) is not None,
         "config": {
             "experiment_id": experiment.id,
             "component": COMPONENT,
             "head_bytes": HEAD_BYTES,
-            "reads_default": fastq.DEFAULT_READS,
-            "reads_min": fastq.MIN_READS,
-            "reads_max": fastq.MAX_READS,
         },
         "runs": _run_rows(experiment),
     })
@@ -167,15 +163,17 @@ def _staged_files(root):
 
 @require_POST
 def launch(request):
-    """Take a staged FASTQ, sample its head, and queue the identification.
+    """Take a staged FASTQ or an SRA accession, and queue the identification.
 
-    Body: `{upload_id, reads, email}`. Every refusal comes **before** `staging.claim`, so
-    a bad box costs nothing and the session stays open to try again; a bad *file* abandons
-    the session, since the fix is a different file.
+    Body: `{upload_id | accession}` -- exactly one of the two. A drop is looked at and moved
+    into the run's directory here, because the bytes are already on local disk; an accession
+    is resolved here (one ENA round trip, so a typo is a 400 beside the box) and fetched by
+    the task, since ENA can stall and the job log and cancel poll are there. Every refusal
+    comes **before** `staging.claim`, so a bad box costs nothing and the session stays open
+    to try again; a bad *file* abandons the session, since the fix is a different file.
 
     Gated on `can_edit_experiment`: what this leads to is the experiment's reference, which
-    is as shared as a write gets, and a locked experiment must refuse it. The sampled reads
-    are sent to NCBI, which the page says in as many words above its button.
+    is as shared as a write gets, and a locked experiment must refuse it.
     """
     if not request.user.is_authenticated:
         return JsonResponse({"error": "You must be signed in."}, status=403)
@@ -193,33 +191,25 @@ def launch(request):
             {"error": "This experiment already has a reference genome, so there is nothing "
                       "to identify. Reload the page."}, status=409)
 
-    # **One run at a time per experiment.** A second identical search is pure waste against
-    # NCBI's per-day cap, and there is no sample name to supersede on, so this refuses
-    # rather than cancelling the first.
+    # **One run at a time per experiment.** A second identical sketch answers the same
+    # thing, and there is no sample name to supersede on, so this refuses rather than
+    # cancelling the first.
     if _active_run(experiment) is not None:
         return JsonResponse(
             {"error": "A run is already in progress for this experiment. Wait for it to "
                       "finish, or cancel it on the Jobs page."}, status=409)
 
     payload = _payload(request)
-    try:
-        reads = fastq.clean_read_count(payload.get("reads"))
-    except fastq.ReadCountError as refusal:
-        return JsonResponse({"error": str(refusal), "field": "reads"}, status=400)
-    # Required, not merely passed on: NCBI asks that every automated search name someone to
-    # contact, and a search with nobody behind it is the deployment answering for a person.
-    email = (payload.get("email") or "").strip()
-    try:
-        if not email:
-            raise ValidationError("NCBI asks for a contact email with every search.")
-        validate_email(email)
-    except ValidationError as refused:
-        return JsonResponse({"error": " ".join(refused.messages), "field": "email"},
-                            status=400)
-
     upload_id = (payload.get("upload_id") or "").strip()
+    accession = (payload.get("accession") or "").strip().upper()
+    if upload_id and accession:
+        return JsonResponse({"error": "Drop a file or type an accession, not both.",
+                             "field": "accession"}, status=400)
+    if accession:
+        return _launch_accession(request, experiment, accession)
     if not upload_id:
-        return JsonResponse({"error": "Drop a FASTQ file first."}, status=400)
+        return JsonResponse({"error": "Drop a FASTQ file or type an SRA accession first."},
+                            status=400)
     session, error = staging.session_for(request, upload_id, COMPONENT)
     if error:
         return error
@@ -257,35 +247,56 @@ def launch(request):
         experiment=experiment,
         created_by=request.user,
         read_file=name,
-        reads_requested=reads,
-        contact_email=email,
         status=STATUS_QUEUED)
+    # Moved rather than copied, and under its own name: sendsketch reads the whole head and
+    # chooses gzip by suffix. `shutil.move` across the store is a rename when the staging
+    # area and the component directory share a filesystem, which they do.
     try:
         store.ensure_dir(run.directory())
-        sampled, bases = fastq.sample(path, reads, run.query_path())
-    except Exception as exc:
-        logger.exception("could not sample reads for a refsniff launch in experiment %s",
+        shutil.move(path, run.reads_path())
+    except OSError as exc:
+        logger.exception("could not take the reads for a refsniff launch in experiment %s",
                          experiment.id)
         run.delete()
         staging.abandon(session)
         return JsonResponse({"error": "The uploaded reads could not be read: %s" % exc},
                             status=500)
-    if not sampled:
-        run.delete()
-        staging.abandon(session)
-        return JsonResponse({"error": "%s holds no complete FASTQ record." % name,
-                             "field": "upload"}, status=400)
-    run.reads_sampled = sampled
-    run.bases_sampled = bases
-    run.save(update_fields=["reads_sampled", "bases_sampled"])
 
-    # The drop is gone by here; the sample lives under the run's own directory.
+    # The drop is gone by here; the head lives under the run's own directory.
     staging.close(session)
+    return _enqueue(request, experiment, run, name)
 
+
+def _launch_accession(request, experiment, accession):
+    """The accession way in: resolve it now, fetch on the worker.
+
+    `sra_fetch.resolve` is the whole of the validation -- the token's shape, whether ENA
+    knows it, whether the run has FASTQ there -- and its sentences are written for a box.
+    The first run's first read file is what is sketched (`ena.first_read_file`), and the row
+    records that file and its URL so the task fetches what was found.
+    """
+    try:
+        plan = sra_fetch.resolve([accession])[0]
+    except (AccessionError, sra_fetch.FetchError) as refusal:
+        return JsonResponse({"error": str(refusal), "field": "accession"}, status=400)
+    _run, entry = ena.first_read_file(plan)
+
+    run = RefsniffRun.objects.create(
+        experiment=experiment,
+        created_by=request.user,
+        accession=accession,
+        read_file=entry["name"],
+        read_url=entry["url"],
+        status=STATUS_QUEUED)
+    return _enqueue(request, experiment, run, accession)
+
+
+def _enqueue(request, experiment, run, label):
+    """Queue the sketch for `run`, record the queue's id on the row, answer the page."""
     job = jobs_api.enqueue(
         tasks.run_refsniff, run.pk,
         user=request.user,
-        label="Identify reference — %s" % name,
+        label="Identify reference — %s" % label,
         component=COMPONENT,
         experiment=experiment,
         cancellable=True)

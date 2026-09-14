@@ -1,9 +1,10 @@
-"""One identification run: which reads were sampled, what NCBI said, and the answer.
+"""One identification run: which reads were sketched, what came back, and the answer.
 
-A row exists because the work outlives the request that asked for it -- a BLAST search is
-minutes -- and because what NCBI answered is the product: a table of candidate genomes a
-person reads and picks from. `django_tasks_db` records a status and a traceback, which is
-a queue's record of a job rather than the experiment's record of an analysis.
+A row exists because the work outlives the request that asked for it -- an ENA fetch is tens
+of seconds and a sketch a few more -- and because the table that comes back is the product: a
+ranked list of candidate genomes a person reads and picks from. `django_tasks_db` records a
+status and a traceback, which is a queue's record of a job rather than the experiment's
+record of an analysis.
 
 `status` here is what *this* believes; `task_result_id` is how to ask the queue. They disagree
 in exactly one useful way -- a row that says `queued` while the queue says the task has never
@@ -21,6 +22,8 @@ from django.db.models.signals import post_delete
 from django.dispatch import receiver
 
 from mutint_common import store
+
+from mutint_refsniff.sketch import SKETCH_FILENAME
 
 logger = logging.getLogger("mutint_refsniff.models")
 
@@ -46,11 +49,11 @@ FINISHED_STATUSES = (STATUS_FINISHED, STATUS_FAILED, STATUS_CANCELLED)
 # row `./mutint reap_jobs` may remove.
 MAX_LOG_CHARS = 20000
 
-QUERY_FILENAME = "query.fasta"
+ENA_BROWSER_URL = "https://www.ebi.ac.uk/ena/browser/view/%s"
 
 
 class RefsniffRun(models.Model):
-    """One launch: a sample of reads, and what BLAST made of them."""
+    """One launch: a head of reads, and what the sketch server made of it."""
 
     experiment = models.ForeignKey("mutint_experiment.Experiment",
                                    on_delete=models.CASCADE, related_name="refsniff_runs")
@@ -60,25 +63,31 @@ class RefsniffRun(models.Model):
     started_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
 
-    # The basename dropped, for a person to read. Not a path: nothing resolves it.
+    # The basename dropped, for a person to read -- or, for a run named by accession, the
+    # ENA filename the task fetches (`SRR..._1.fastq.gz`). Not a path: nothing resolves it,
+    # but it is the name the file keeps inside the run's directory, because sendsketch
+    # chooses gzip by suffix.
     read_file = models.CharField(max_length=255)
-    # What the page asked for, and what was actually taken -- fewer when the file, or the
-    # slice of it the page uploaded, held fewer records than asked.
-    reads_requested = models.PositiveIntegerField()
-    reads_sampled = models.PositiveIntegerField(default=0)
-    bases_sampled = models.BigIntegerField(default=0)
+    # The SRA accession typed, when the reads come from ENA rather than a drop; blank for a
+    # drop. `read_url` is where `sra_fetch.resolve` found the file, recorded at launch so
+    # the task fetches what was found and does not ask ENA for a second opinion.
+    accession = models.CharField(max_length=32, blank=True, default="")
+    read_url = models.CharField(max_length=512, blank=True, default="")
 
-    # Who NCBI may contact about this search: the launcher's account address, as the form
-    # showed it, or the deployment's fallback. Recorded per run because it was sent per run.
-    contact_email = models.CharField(max_length=254, blank=True)
-    # NCBI's request id, so the run's log and a person can find the search on NCBI's side.
-    blast_rid = models.CharField(max_length=64, blank=True)
-    # `[{accession, title, organism, reads, fraction, mean_identity}]`, most reads first.
-    blast_hits = models.JSONField(default=list)
-    # Something worth reading about a run that finished: that the search found nothing.
+    # What sendsketch reported it loaded. Not what was asked for -- nothing is asked for; the
+    # head is whatever fitted in `fastq.HEAD_BYTES` and these are what was in it.
+    reads_sketched = models.PositiveIntegerField(default=0)
+    bases_sketched = models.BigIntegerField(default=0)
+
+    # `[{name, taxid, accession, title, taxonomy, ani, completeness, contamination, matches,
+    # unique, draft, assembly, import_accession}]`, in the order the sketch server ranked
+    # them. See `sketch.parse`.
+    hits = models.JSONField(default=list)
+    # Something worth reading about a run that finished: that nothing matched.
     note = models.TextField(blank=True)
 
-    # The top hit. Blank when the search answered nothing.
+    # The top hit, as the page's headline. `best_accession` is what **Use as reference**
+    # would import for it -- the assembly where there is one.
     best_accession = models.CharField(max_length=64, blank=True)
     best_organism = models.CharField(max_length=255, blank=True)
 
@@ -102,9 +111,21 @@ class RefsniffRun(models.Model):
         """This run's own work area. Everything it writes lives under here."""
         return store.component_dir(COMPONENT, self.pk)
 
-    def query_path(self):
-        """The sampled reads as FASTA with numbered ids, which is what BLAST is sent."""
-        return os.path.join(self.directory(), QUERY_FILENAME)
+    def reads_path(self):
+        """The head sendsketch reads: the drop moved here, or the ENA file fetched here.
+
+        One path for both ways in, under the name the file arrived with -- which matters,
+        because gzip is chosen by suffix all the way down.
+        """
+        return os.path.join(self.directory(), self.read_file)
+
+    def sketch_path(self):
+        """Where sendsketch writes its JSON."""
+        return os.path.join(self.directory(), SKETCH_FILENAME)
+
+    def accession_url(self):
+        """ENA's browser page for the accession, or "" for a drop."""
+        return ENA_BROWSER_URL % self.accession if self.accession else ""
 
     def truncated_log(self, text):
         if len(text) <= MAX_LOG_CHARS:

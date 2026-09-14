@@ -1,8 +1,12 @@
 <p><b>Identify a reference genome from reads.</b> A tab on the Import data page, offered while
-    an experiment has no reference: drop one FASTQ, and the first few hundred reads are sent to
-    NCBI BLAST and searched against RefSeq bacterial and archaeal genomes. The answer is a table
-    of the closest genomes &mdash; accession, how many reads chose each, their identity &mdash;
-    and the top one can be imported as the experiment's reference with one click.</p>
-<p>The work runs on the task queue, one run per experiment at a time, and stays within NCBI's
-    limits on automated searches. Nothing is installed for it: the client is the standard
-    library.</p>
+    an experiment has no reference: drop one FASTQ or name an SRA run, and the first 16&nbsp;MB
+    of it is sketched against RefSeq. The answer is a ranked table of the closest genomes
+    &mdash; organism, average nucleotide identity, how complete the match is &mdash; and the
+    best one can be imported as the experiment's reference with one click, as the assembly it
+    belongs to rather than as a single sequence.</p>
+<p>What leaves the deployment is a <b>sketch</b>: a few kilobytes of k-mer hashes, sent to
+    BBTools' RefSeq sketch server at JGI. No read and no assembled sequence is sent, and
+    nothing identifies who asked. The tool is <code>sendsketch.sh</code> from bioconda's
+    <code>bbmap</code>, which brings a JDK with it; reads named by an SRA accession are
+    fetched from ENA over HTTPS, and the assembly for each hit is looked up at NCBI Datasets.
+    The work runs on the task queue, one run per experiment at a time.</p>

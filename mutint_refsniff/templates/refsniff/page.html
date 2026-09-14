@@ -32,9 +32,16 @@
         cannot start anything new.{% endif %}
     </div>
 {% else %}
-    <p>Drop one FASTQ file of reads from this organism. The first few hundred reads are
-       searched against RefSeq genomes to find the closest strain, and the answer can then be
-       imported as <b>{{ experiment.name }}</b>'s reference.</p>
+    <p>Drop one FASTQ file of reads from this organism, or name a run in the SRA. The first
+       16&nbsp;MB is sketched against RefSeq and the closest genomes come back ranked by how
+       much of the genome the reads share with each, and the best one can then be imported
+       as <b>{{ experiment.name }}</b>'s reference.</p>
+
+    {% if not tool_available %}
+        <div class="alert alert-danger">
+            <b>This cannot run here.</b> {{ tool_missing }}
+        </div>
+    {% endif %}
 
     <form id="refsniff-form">
         {% csrf_token %}
@@ -48,43 +55,40 @@
         </div>
         <small class="help-block">
             Only the beginning of the file is uploaded &mdash; the first 16&nbsp;MB &mdash;
-            which is more than enough for the reads sampled.
+            which holds well over a hundred thousand reads, far more than the answer needs.
         </small>
         <div id="refsniff-file-list" style="margin-top: 0.5em;"></div>
 
-        <div class="form-group" style="margin-top: 1em;">
-            <label for="refsniff-reads">Reads to sample</label>
-            <input type="number" class="form-control" id="refsniff-reads"
-                   min="{{ config.reads_min }}" max="{{ config.reads_max }}" step="1"
-                   value="{{ config.reads_default }}" inputmode="numeric" autocomplete="off"
-                   style="width: 8em;">
+        <p style="text-align: center; color: #666; margin: 0.6em 0;">&mdash; or &mdash;</p>
+
+        {% comment %} The second way in. Resolved through ENA at launch, so a typo is a
+           message beside this box; fetched on the worker, only its first 16 MB, and
+           sketched exactly as a drop is. {% endcomment %}
+        <div class="form-group">
+            <label for="refsniff-accession">SRA accession</label>
+            <input type="text" class="form-control" id="refsniff-accession"
+                   placeholder="e.g. SRR2584863" autocomplete="off" spellcheck="false"
+                   style="max-width: 16em;">
             <small class="help-block">
-                Between {{ config.reads_min }} and {{ config.reads_max }}, taken from the start
-                of the file. More reads make the search slower and rarely change the answer.
+                A run (<code>SRR&hellip;</code>), experiment (<code>SRX&hellip;</code>), sample
+                (<code>SRS&hellip;</code>, <code>SAMN&hellip;</code>) or study
+                (<code>SRP&hellip;</code>, <code>PRJNA&hellip;</code>). The first run's first
+                read file is used, and only its first 16&nbsp;MB is fetched, from ENA, when the
+                run starts.
             </small>
         </div>
 
         {% comment %} Said in as many words, because core's own rule is that sequence does
-           not leave the deployment -- and this page is the one place that rule is set aside,
-           by a person, for a few hundred reads. {% endcomment %}
+           not leave the deployment, and this page is the one place it bends. What leaves is a
+           sketch -- k-mer hashes, from which the reads cannot be read back -- and saying
+           which of the two it is is the whole point of the sentence. {% endcomment %}
         <div class="alert alert-info" style="padding: 0.6em 1em;">
-            <b>The sampled reads are sent to NCBI.</b> Its BLAST service searches them
-            against RefSeq bacterial and archaeal genomes and answers with the accession of
-            the closest one, which <b>Use as reference</b> can then import. A search takes a
-            few minutes, and NCBI allows a site about a hundred a day.
-        </div>
-
-        <div class="form-group">
-            <label for="refsniff-email">Contact email for NCBI</label>
-            <input type="email" class="form-control" id="refsniff-email"
-                   value="{{ contact_email }}" autocomplete="email" required
-                   style="max-width: 24em;">
-            <small class="help-block">
-                NCBI asks that every automated search name someone it can contact, and sends
-                nothing to it otherwise. Prefilled from your account; change it for good with
-                <a href="{% url 'accounts:email_change' %}">Change Email</a> under your name
-                in the sidebar.
-            </small>
+            <b>A sketch of the reads leaves this deployment, not the reads.</b> A few
+            kilobytes of k-mer hashes go to
+            <a href="https://sourceforge.net/projects/bbmap/" target="_blank"
+               rel="noopener">BBTools</a>' RefSeq sketch server at JGI, which answers with the
+            genomes those hashes match. No read and no assembled sequence is sent. Reads named
+            by an SRA accession are fetched from ENA, where they are already public.
         </div>
 
         <div id="refsniff-progress" style="display: none; margin-top: 1em;">

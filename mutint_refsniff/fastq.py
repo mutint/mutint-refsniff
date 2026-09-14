@@ -1,43 +1,30 @@
-"""Reading the head of a FASTQ: is it one, and the first N records of it.
+"""Reading the head of a FASTQ: is it one, and how much of one to take.
 
 Pure, and raw: four lines a record, `gzip` chosen by suffix, no Biopython -- the shape
 mutint-breseq's `pairing.py` and `mate_check.py` read reads in, and for the same reason: the
-whole job is a few hundred records off the front of a file, and a parser that validates the
-lot would read the lot.
+question is whether the first record looks right, and a parser that validates the file would
+read the file.
+
+**Nothing here selects or rewrites reads.** sendsketch is given the head exactly as it
+arrived and reads all of it, so what this module answers is only whether a file is worth
+handing over -- a question the view asks of a drop and the task asks of an ENA fetch.
 
 **A truncated tail is expected, not an error.** The page uploads only the first few megabytes
-of a file that may be gigabytes, so the last record is usually cut mid-line and a gzip member
-ends without its footer. `sample` stops at the first record it cannot read whole and reports
-how many it took; `sniff` looks only at the first record, which the slice always holds.
+of a file that may be gigabytes, and the task fetches the same slice from ENA, so the last
+record is usually cut mid-line and a gzip member ends without its footer. `sniff` looks only
+at the first record, which the slice always holds; sendsketch loads every whole record before
+the cut and prints a ZLIB traceback about the rest, which is not a failure -- see `sketch.py`.
 """
 
 import gzip
 
 FASTQ_SUFFIXES = (".fastq", ".fq", ".fastq.gz", ".fq.gz")
 
-DEFAULT_READS = 200
-MIN_READS = 100
-MAX_READS = 1000
-
-
-class ReadCountError(Exception):
-    """The Reads box did not hold a count this can be run with."""
-
-
-def clean_read_count(raw):
-    """The Reads box as an int within bounds, or the default for blank."""
-    text = "" if raw is None else str(raw).strip()
-    if not text:
-        return DEFAULT_READS
-    try:
-        value = int(text)
-    except (TypeError, ValueError):
-        raise ReadCountError("Reads to sample has to be a whole number between %d and %d."
-                             % (MIN_READS, MAX_READS))
-    if not MIN_READS <= value <= MAX_READS:
-        raise ReadCountError("Reads to sample has to be between %d and %d."
-                             % (MIN_READS, MAX_READS))
-    return value
+#: How much of a file the page uploads, and how much of an ENA file the task fetches. A FASTQ
+#: can be gigabytes and a sketch of the first 16 MiB is already the answer: measured on a real
+#: run, that slice held 135 798 reads and separated E. coli B REL606 from K-12. Here rather
+#: than in `views.py` because `tasks.py` needs it too and `views` imports `tasks`.
+HEAD_BYTES = 16 * 1024 * 1024
 
 
 def is_fastq_name(name):
@@ -92,6 +79,19 @@ def sniff(path):
     return None
 
 
+def has_a_record(path):
+    """Whether `path` holds at least one whole FASTQ record.
+
+    What the task asks of a head fetched from ENA, which nothing looked at before it arrived.
+    A drop was sniffed in the view; this is the same question asked of bytes nobody chose.
+    """
+    try:
+        with open_lines(path) as handle:
+            return next(_records(handle), None) is not None
+    except (EOFError, OSError, gzip.BadGzipFile):
+        return False
+
+
 class _Rewound:
     """A handle whose first `readline` answers a line already taken off it."""
 
@@ -104,22 +104,3 @@ class _Rewound:
             line, self._first = self._first, None
             return line
         return self._handle.readline()
-
-
-def sample(path, count, fasta_out):
-    """Write the first `count` whole records of `path` to `fasta_out` as FASTA with ids
-    `read_1`, `read_2`, .... Returns `(records, bases)`.
-
-    Renumbered ids, because the originals carry spaces, slashes and colons that BLAST's
-    query parser reads as something else, and nothing downstream needs the original names.
-    """
-    records = 0
-    bases = 0
-    with open_lines(path) as handle, open(fasta_out, "wb") as fasta:
-        for _header, sequence, _plus, _quality in _records(handle):
-            if records >= count:
-                break
-            records += 1
-            bases += len(sequence)
-            fasta.write(b">read_%d\n%s\n" % (records, sequence))
-    return records, bases

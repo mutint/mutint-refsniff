@@ -10,50 +10,62 @@ by this page or any other -- it leaves the strip, because there is nothing left 
 ## Running it
 
 1. Open the experiment's **Import data** page and choose **Identify Reference from Reads**.
-2. Drop one FASTQ file (`.fastq`, `.fq`, or either gzipped). Only the first 16 MB is
-   uploaded, which is far more than the reads sampled.
-3. **Reads to sample** is how many reads from the start of the file are searched, between
-   100 and 1000. The default of 200 is usually enough; more reads make the search slower and
-   rarely change the answer.
-4. **Contact email for NCBI** is prefilled from your account. NCBI asks that every automated
-   search name someone it can contact. Change it for one run here, or for good with **Change
-   Email** under your name in the sidebar.
-5. Press **Identify reference**. The run is queued and its progress appears under **Runs**;
+2. Either drop one FASTQ file (`.fastq`, `.fq`, or either gzipped) -- only the first 16 MB is
+   uploaded -- **or** type an SRA accession: a run (`SRR…`), experiment (`SRX…`), sample
+   (`SRS…`, `SAMN…`) or study (`SRP…`, `PRJNA…`). An accession that names more than one run
+   takes its first, and a paired run takes read 1; the first 16 MB of that file is fetched
+   from ENA when the run starts.
+3. Press **Identify reference**. The run is queued and its progress appears under **Runs**;
    the same job is listed on your **Jobs** page, where it can be cancelled.
+
+There is nothing else to fill in. The whole head is used -- about 136 000 reads for a typical
+150 bp run -- and the search takes a few seconds once a worker picks it up.
 
 Only one run at a time can be in progress for an experiment. A second launch is refused
 until the first finishes or is cancelled.
 
 ## What leaves your MutInt
 
-The sampled reads themselves are sent to NCBI's BLAST service and searched against RefSeq
-bacterial and archaeal genomes. The page says so above the button. Do not use this tab for
-reads that may not be sent to a public service.
+**A sketch of the reads, not the reads.** MutInt hashes every k-mer of the head, keeps a few
+thousand of those hashes, and sends *those* -- a few kilobytes of numbers -- to BBTools'
+RefSeq sketch server at JGI, which answers with the genomes they match. No read and no
+assembled sequence is sent, and nothing names you or your deployment.
 
-A search takes a few minutes: NCBI's service is shared, and MutInt asks it for the result no
-more than once a minute, as NCBI's rules require. NCBI also limits a site to about a hundred
-automated searches a day. Each search carries the contact email from the form; a deployment
-may set `MUTINT_NCBI_EMAIL` as the address offered to an account that has none.
+Two other services are asked about things that are already public: reads named by an SRA
+accession are fetched from ENA, where that run is published; and each genome in the answer is
+looked up at NCBI Datasets, by its taxonomy id, to find the assembly it belongs to.
 
 ## Reading the result
 
-Each finished run shows a table of the genomes the reads matched: organism, accession, how
-many of the sampled reads had that genome as their best hit, and the mean identity of those
-hits. The top row is the genome most reads chose. When the top rows are close -- two strains
-of one species splitting the reads -- the identity column and the counts say how divided the
-evidence is; a few hundred reads cannot separate strains that differ by a handful of bases,
-and any of the close candidates is a workable reference.
+Each finished run shows a table of the genomes the sketch matched, best first:
 
-A **log** link on each run opens what the search reported, while it is still in progress,
-and the NCBI search id links to NCBI's own view of the result for a day or so.
+- **Organism** -- the strain, not just the species. The search asks for one row per strain,
+  which is the resolution the answer is for: *E. coli* K-12 and *E. coli* B REL606 are about
+  1.5% apart, and a reference that far off is one breseq will refuse to map across.
+- **ANI** -- average nucleotide identity between your reads and that genome. A good match for
+  a reference is 99.5% or better; the difference between 99.8% and 99.7% is the difference
+  between two near-identical strains and is worth reading beside the organism names.
+- **Complete** -- how much of that genome your reads covered. A low figure beside a high ANI
+  usually means a draft assembly, or a genome larger than the one you sequenced.
+- **Contam.** -- how much of your sketch that genome does *not* explain. It rises down the
+  table as the candidates get further away; a high figure on the top row is worth a look, as
+  it can mean a mixed culture.
+- **Genome** -- the assembly the strain belongs to, linked to NCBI. Where NCBI lists no
+  assembly, the single sequence the sketch matched is shown instead.
+
+A **log** link on each run opens what the run reported, while it is still running. It usually
+contains a `java.io.EOFException: Unexpected end of ZLIB input stream` -- that is expected,
+not a failure: only the first 16 MB of the file is read, so its last gzip block is cut short.
 
 ## Using the answer
 
-**Use as reference** on the top hit downloads that accession from NCBI and establishes it as
-the experiment's reference genome, exactly as typing the accession into the Reference
-Sequence tab's box would. You land on the experiment's Reference page, and this tab is no
-longer offered.
+**Use as reference** on a row downloads that genome from NCBI and establishes it as the
+experiment's reference, exactly as typing the accession into the Reference Sequence tab's box
+would. When the row names an assembly, **every sequence the assembly is made of** is imported
+-- the chromosome and its plasmids -- which is what breseq wants. You land on the experiment's
+Reference page, and this tab is no longer offered.
 
-If the top hit is a plasmid, or the reads matched several chromosomes of the same species,
-choose the accession yourself on the Reference Sequence tab instead: the button imports one
-record, and a reference that needs a chromosome and its plasmids is several.
+A row whose match is one contig of a draft assembly, and for which NCBI lists no assembly,
+offers no button: importing that one contig would establish a reference missing almost all of
+the genome. Choose a different row, or type an accession yourself on the Reference Sequence
+tab.

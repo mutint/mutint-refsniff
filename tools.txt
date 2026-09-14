@@ -1,8 +1,23 @@
 # Conda package specs, one per line, collected by the entry script and installed into
 # env/tools with micromamba. See mutint-core/tools.txt for the contract.
 #
-# None. The one service this plugin asks is NCBI BLAST over its URL API, and the client is
-# the standard library. BBTools' sendsketch was here for a while as a fast first step; it
-# went because it saved no NCBI searches and, on a few hundred reads, could not separate
-# strains that BLAST's per-read votes could -- so it cost a JDK in every install for a
-# second opinion the page did not need.
+# BBTools, for `sendsketch.sh`: the whole identification is one call to it. It sends a MinHash
+# sketch -- a few kilobytes of k-mer hashes -- to JGI's RefSeq sketch server and gets back the
+# genomes those hashes match, with an ANI for each. No read leaves the deployment.
+#
+# **It was here before and was removed**, on the reasoning that it saved no NCBI BLAST search
+# and that on 200 reads a sketch could not separate strains. Both premises are gone: BLAST is
+# no longer run at all (NCBI's genome databases queue a URL-API search effectively forever --
+# measured 2026-09-14: every search against refseq_genomes, nt_prok and
+# prok_complete_genomes was still WAITING after two hours, a one-read query included), and
+# what is sketched now is the whole 16 MB head, ~136 000 reads rather than 200. On that input
+# it answers in about 3 seconds and separates E. coli B REL606 from K-12, which is the
+# resolution a breseq reference needs.
+#
+# **The cost is a JDK.** bbmap depends on `openjdk >=11`, so this line adds roughly 600 MB to
+# every install. That is the price of the only thing in reach that answers the question.
+#
+# There is deliberately no per-platform machinery here or in the entry script: the entry
+# script installs every component's tools in one micromamba solve, so a spec must have a
+# build for every platform MutInt runs on. bbmap 40.02 has osx-arm64, osx-64 and linux-64.
+bbmap

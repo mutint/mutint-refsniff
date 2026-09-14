@@ -2,24 +2,26 @@
 
 Identify an experiment's reference genome from a sample of its reads, from inside
 [MutInt](https://github.com/mutint/mutint-core). An **Identify Reference from Reads** tab on
-the Import data page, offered while an experiment has no reference: drop one FASTQ, and the
-first few hundred reads are sent to NCBI BLAST and searched against RefSeq bacterial and
-archaeal genomes. The answer is a ranked table of the closest genomes — accession, how many
-reads chose each, their identity — and **Use as reference** imports the top one through
-core's own accession import.
+the Import data page, offered while an experiment has no reference: drop one FASTQ, or name a
+run in the SRA, and the first 16 MB of it is sketched against RefSeq. The answer is a ranked
+table of the closest genomes — organism, average nucleotide identity, completeness — and
+**Use as reference** imports the best one, as an assembly, through core's own accession
+import.
 
-**It needs a worker** — a search is minutes — so it is enqueued on `django.tasks`;
-`./mutint start` runs one for you. One run per experiment at a time, and NCBI allows a site
-about a hundred searches a day.
+**It resolves strains, which is the point.** A sketch of ~136 000 reads separates
+*E. coli* B REL606 from K-12 — about 1.5% divergent, which is more than breseq will map
+across — where a vote over a few hundred reads cannot.
 
-**Nothing is installed for it.** The client is the standard library, talking to NCBI's BLAST
-URL API within the limits NCBI publishes. Each search names the person who launched it, from
-the email on their account (core's Change Email page is where that is set), with
-`MUTINT_NCBI_EMAIL` as the deployment's fallback.
+**What leaves the deployment is a sketch, not reads.** A few kilobytes of k-mer hashes go to
+BBTools' RefSeq sketch server at JGI, which answers with the genomes those hashes match. No
+read and no assembled sequence is sent, and no contact address is asked for. The page says so
+above its button.
 
-**The reads leave the deployment**, and the page says so above its button. That is the one
-place core's rule that sequence never leaves is set aside, by a person, for a few hundred
-reads.
+**It needs a worker** — the fetch and the sketch outlive a request — so it is enqueued on
+`django.tasks`; `./mutint start` runs one for you. One run per experiment at a time.
+
+**One tool**: `bbmap`, from bioconda, installed into `env/tools` like every other. It depends
+on a JDK, which is most of what it costs to install.
 
 ## Installing
 

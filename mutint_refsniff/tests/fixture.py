@@ -1,5 +1,5 @@
-"""The setup every view and task test shares: a signed-in owner, a store of their own, an
-experiment with **no** reference, and a scripted NCBI (`fake_blast.patched`)."""
+"""The setup every view and task test shares: a signed-in owner, a store of their own, and
+an experiment with **no** reference."""
 
 import gzip
 import json
@@ -26,8 +26,7 @@ class RefsniffFixture(TestCase):
 
         self.store = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.store, True)
-        patcher = override_settings(MUTINT_STORE_DIR=self.store,
-                                    MUTINT_NCBI_EMAIL="ops@example.org")
+        patcher = override_settings(MUTINT_STORE_DIR=self.store)
         patcher.enable()
         self.addCleanup(patcher.disable)
 
@@ -52,8 +51,11 @@ class RefsniffFixture(TestCase):
                 handle.write(extra_data)
         return session
 
-    def launch(self, upload_id, reads="200", email="o@e.com", experiment_id=None):
-        body = {"upload_id": str(upload_id), "reads": reads, "email": email}
+    def launch(self, upload_id, experiment_id=None, accession=None):
+        """POST the launch. `accession` instead of an upload, or beside one to be refused."""
+        body = {"upload_id": str(upload_id)}
+        if accession is not None:
+            body["accession"] = accession
         return self.client.post(
             "/refsniff/launch?experiment_id=%s" % (
                 self.experiment.id if experiment_id is None else experiment_id),

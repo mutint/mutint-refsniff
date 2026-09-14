@@ -1,4 +1,4 @@
-"""Reading the head of a FASTQ: names, sniffing, and sampling a cut-off file."""
+"""Reading the head of a FASTQ: names, sniffing, and a file cut mid-record."""
 
 import gzip
 import os
@@ -23,15 +23,6 @@ class NameTestCase(SimpleTestCase):
         for name in ("a.fasta", "a.gz", "a.fastq.zip", "a.txt", "fastq"):
             self.assertFalse(fastq.is_fastq_name(name), name)
 
-    def test_the_read_count_box(self):
-        self.assertEqual(fastq.DEFAULT_READS, fastq.clean_read_count(""))
-        self.assertEqual(fastq.DEFAULT_READS, fastq.clean_read_count(None))
-        self.assertEqual(250, fastq.clean_read_count(" 250 "))
-        self.assertEqual(1000, fastq.clean_read_count(1000))
-        for bad in ("99", "1001", "x", "2.5"):
-            with self.assertRaises(fastq.ReadCountError, msg=bad):
-                fastq.clean_read_count(bad)
-
 
 class FileTestCase(SimpleTestCase):
     def setUp(self):
@@ -44,13 +35,6 @@ class FileTestCase(SimpleTestCase):
         with opener(path, "wb") as handle:
             handle.write(data)
         return path
-
-    def _sample(self, path, count):
-        out_fasta = os.path.join(self.dir, "query.fasta")
-        result = fastq.sample(path, count, out_fasta)
-        with open(out_fasta, "rb") as handle:
-            query = handle.read()
-        return result, query
 
     def test_sniff_accepts_plain_and_gzipped_fastq(self):
         self.assertIsNone(fastq.sniff(self._write("a.fastq", records(3))))
@@ -65,34 +49,25 @@ class FileTestCase(SimpleTestCase):
         # A header with nothing after it.
         self.assertIn("four", fastq.sniff(self._write("a.fastq", b"@r1\nACGT\n")))
 
-    def test_sample_takes_exactly_the_count_and_renumbers_the_fasta(self):
-        (count, bases), query = self._sample(self._write("a.fastq", records(10)), 3)
-        self.assertEqual((3, 30), (count, bases))
-        self.assertEqual(b">read_1\nACGTACGTAC\n>read_2\nACGTACGTAC\n>read_3\nACGTACGTAC\n",
-                         query)
+    def test_has_a_record(self):
+        self.assertTrue(fastq.has_a_record(self._write("a.fastq", records(2))))
+        self.assertTrue(fastq.has_a_record(self._write("b.fastq.gz", records(2), gz=True)))
+        # Cut before the first record is whole, which is what a Range fetch of a tiny file
+        # can leave; and a file that is not FASTQ at all.
+        self.assertFalse(fastq.has_a_record(self._write("c.fastq", b"@r1\nACG")))
+        self.assertFalse(fastq.has_a_record(self._write("d.fastq", b"")))
+        self.assertFalse(fastq.has_a_record(self._write("e.fastq.gz", b"not gzip at all")))
 
-    def test_sample_takes_fewer_when_the_file_is_short(self):
-        (count, _bases), _q = self._sample(self._write("a.fastq", records(2)), 200)
-        self.assertEqual(2, count)
-
-    def test_a_record_cut_mid_line_is_dropped(self):
-        data = records(2) + b"@r3\nACGTAC"
-        (count, _b), query = self._sample(self._write("a.fastq", data), 200)
-        self.assertEqual(2, count)
-        self.assertEqual(b">read_1\nACGTACGTAC\n>read_2\nACGTACGTAC\n", query)
-
-    def test_a_gzip_member_cut_short_ends_the_sample_rather_than_raising(self):
-        """The page uploads the first 16 MB of a gzip, so the last member has no footer."""
+    def test_a_gzip_member_cut_short_still_reads_its_whole_records(self):
+        """The page uploads the first 16 MB of a gzip and the task fetches the same slice,
+        so the last member has no footer. sendsketch loads what is whole and prints a ZLIB
+        traceback about the rest; this is the same question asked here."""
         whole = gzip.compress(records(400))
         path = self._write("a.fastq.gz", whole[: len(whole) // 2])
         self.assertIsNone(fastq.sniff(path))
-        (count, _b), query = self._sample(path, 1000)
-        self.assertGreater(count, 0)
-        self.assertLess(count, 400)
-        self.assertEqual(count, query.count(b">read_"))
+        self.assertTrue(fastq.has_a_record(path))
 
-    def test_windows_line_endings_are_stripped(self):
-        data = b"@r1\r\nACGT\r\n+\r\nIIII\r\n"
-        (count, bases), query = self._sample(self._write("a.fastq", data), 5)
-        self.assertEqual((1, 4), (count, bases))
-        self.assertEqual(b">read_1\nACGT\n", query)
+    def test_the_head_is_sixteen_mebibytes(self):
+        """Named in three places -- the page's slice, the Range request and the sentence a
+        failed fetch prints -- and measured: that slice of a real run held 135 798 reads."""
+        self.assertEqual(16 * 1024 * 1024, fastq.HEAD_BYTES)

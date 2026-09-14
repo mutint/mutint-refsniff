@@ -30,4 +30,4 @@ class RegistrationTestCase(RefsniffFixture):
         response = self.client.get("/about")
         self.assertEqual(200, response.status_code)
         self.assertContains(response, "mutint-refsniff")
-        self.assertContains(response, "BLAST")
+        self.assertContains(response, "sketch")
