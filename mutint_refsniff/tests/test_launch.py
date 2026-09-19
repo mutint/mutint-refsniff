@@ -34,7 +34,6 @@ class PageTestCase(RefsniffFixture):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'id="refsniff-dropzone"')
         self.assertContains(response, 'id="refsniff-accession"')
-        self.assertContains(response, "sweetalert")
         # The strip, with this tab active and the type tabs beside it.
         self.assertContains(response, "Identify Reference from Reads")
         self.assertContains(response, "Reference Sequence")

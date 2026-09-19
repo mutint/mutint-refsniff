@@ -2,11 +2,6 @@
 {% load import_tabs %}
 {% load static %}
 
-{% block scripts_and_style %}
-    {# mutintConfirm calls swal(); base.html does not load sweetalert. #}
-    <script src="{% static "vendor/sweetalert-2.1.2/sweetalert.min.js" %}"></script>
-{% endblock %}
-
 {% block title %}Identify Reference from Reads — {{ experiment.name }}{% endblock %}
 
 {% block header %}

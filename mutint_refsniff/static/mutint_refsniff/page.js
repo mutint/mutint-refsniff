@@ -2,8 +2,9 @@
  *
  * Lifted from mutint-breseq's launch.js and cut down: one file or one accession, and no
  * name to derive. The few values it needs arrive through a `json_script` element, so nothing
- * here needs the template engine. The uploader, the JSON poster and the confirm dialog are
- * core's, loaded from base.html.
+ * here needs the template engine. The uploader and the JSON poster are core's, loaded from
+ * base.html; there is no confirm dialog here any more, and `page.html` therefore loads no
+ * sweetalert -- see the Use as reference handler for why.
  */
 (function () {
     "use strict";
@@ -19,10 +20,6 @@
     var form = document.getElementById("refsniff-form");
     var pollTimer = null;
     var pollGeneration = 0;
-    // Set while "Use as reference" is importing, so a second click cannot start a second
-    // import of the same genome, and so the run list's poll leaves the button alone.
-    var importing = false;
-
     function esc(text) {
         var div = document.createElement("div");
         div.textContent = text === null || text === undefined ? "" : String(text);
@@ -107,8 +104,7 @@
             if (hit.import_accession && run.status === "finished" && form) {
                 action = '<button type="button" class="btn btn-primary btn-xs refsniff-use" ' +
                          'data-accession="' + esc(hit.import_accession) + '" data-organism="' +
-                         esc(hit.name) + '"' + (importing ? " disabled" : "") +
-                         ">Use as reference</button>";
+                         esc(hit.name) + '">Use as reference</button>';
             }
             html.push("<tr><td title=\"" + esc(hit.title) + "\">" + esc(hit.name) +
                       "</td><td>" + esc(num(hit.ani)) + "%</td><td>" +
@@ -117,6 +113,17 @@
                       "</td><td>" + action + "</td></tr>");
         });
         html.push("</tbody></table>");
+        // What the confirm dialog used to say at the moment of pressing. It is a standing
+        // fact about every row of this table rather than about one press, and it is this
+        // plugin's knowledge -- nothing on the page it hands over to knows that the accession
+        // arrived from a strain match, or that this tab closes once a reference exists.
+        if (form) {
+            html.push('<p style="margin-bottom: 1em;"><small>Use as reference fills the ' +
+                      "accession into the Reference Sequence tab, where you press Import " +
+                      "and can tick the annotators to run on it. Importing an assembly " +
+                      "brings every sequence it is made of, plasmids included, and this tab " +
+                      "closes once the experiment has a reference.</small></p>");
+        }
         return html.join("");
     }
 
@@ -223,63 +230,29 @@
             .catch(function (err) { window.alert(err.message || String(err)); });
     });
 
-    // "Use as reference": core's own accession import, driven from here. The two calls are
-    // exactly what the Reference Sequence tab's accession box makes -- open a session for
-    // the `reference` type carrying the accession and no files, then finalize -- so the
-    // permission, the lock and a busy importer are all core's answers. Then the Reference
-    // tab, because that is where the genome that just arrived is described, and this tab
-    // is about to disappear from the strip.
+    // "Use as reference": hand the accession to core's Reference Sequence tab, filled into
+    // the box a person would otherwise have typed it into, and let them press Import there.
+    //
+    // **It used to do the import itself**, with the two calls that box makes, and what it
+    // could not carry is the reason it no longer does: the reference tabs are where the
+    // registered annotators are offered, and a POST from here had no boxes to tick, so it
+    // sent `{annotators: {}}`. The one path that knows for certain this experiment has no
+    // reference was therefore also the one path that silently skipped every annotator --
+    // ISEScan among them, whose whole point is to run *before* any reads are called against
+    // the genome.
+    //
+    // No confirm dialog, and that follows the house rule rather than dropping one: which
+    // dialog a control gets is decided by whether the person can undo it themselves, and a
+    // navigation is undone with Back. What the old one warned about -- every sequence the
+    // assembly is made of, plasmids included -- is a standing fact about this table rather
+    // than about one press, so the page says it under the table instead.
     runsEl.addEventListener("click", function (e) {
         var button = e.target.closest ? e.target.closest(".refsniff-use") : null;
-        if (!button || importing) { return; }
+        if (!button) { return; }
         e.preventDefault();
-        var accession = button.getAttribute("data-accession");
-        var organism = button.getAttribute("data-organism");
-        window.mutintConfirm(
-            "Use " + accession + " as the reference?",
-            organism + " (" + accession + ") will be downloaded from NCBI and become this " +
-            "experiment's reference genome \u2014 every sequence the assembly is made of, " +
-            "its plasmids included. The tab you are on will then close, because there is " +
-            "nothing left for it to identify.",
-            "Import reference"
-        ).then(function (go) {
-            if (!go) { return; }
-            importing = true;
-            button.disabled = true;
-            button.textContent = "Importing…";
-            return mutintUpload([], {
-                experimentId: EXPERIMENT_ID,
-                importType: "reference",
-                accessions: accession
-            }).then(function (uploadId) {
-                return mutintPostJson("/import/uploads/" + uploadId + "/finalize",
-                                      {annotators: {}});
-            }).then(function (summary) {
-                if (summary && summary.needs_confirmation) {
-                    // Cannot happen for an experiment with no reference, which is the only
-                    // kind this page launches from; if it somehow does, the Reference tab
-                    // is where the question is asked and answered.
-                    window.location = "/import/?experiment_id=" + EXPERIMENT_ID +
-                                      "&tab=reference";
-                    return;
-                }
-                var failed = (summary && summary.files || []).filter(function (row) {
-                    return row.error;
-                });
-                if (failed.length) {
-                    throw new Error(failed.map(function (row) {
-                        return row.file + ": " + row.error;
-                    }).join("; "));
-                }
-                window.location = "/mutations/reference?experiment_id=" + EXPERIMENT_ID;
-            }).catch(function (err) {
-                importing = false;
-                button.disabled = false;
-                button.textContent = "Use as reference";
-                window.alert("The reference could not be imported: " +
-                             (err.message || String(err)));
-            });
-        });
+        window.location = "/import/?experiment_id=" + EXPERIMENT_ID + "&tab=reference" +
+                          "&accession=" +
+                          encodeURIComponent(button.getAttribute("data-accession"));
     });
 
     renderRuns(runsData);

@@ -60,11 +60,19 @@ search carries on with every read before the cut, and the run is not affected.
 
 ## Using the answer
 
-**Use as reference** on a row downloads that genome from NCBI and establishes it as the
-experiment's reference, exactly as typing the accession into the Reference Sequence tab's box
-would. When the row names an assembly, **every sequence the assembly is made of** is imported
--- the chromosome and its plasmids -- which is what breseq wants. You land on the experiment's
-Reference page, and this tab is no longer offered.
+**Use as reference** on a row takes you to the **Reference Sequence** tab with that accession
+already typed into its NCBI box. Check it, and press **Import** there.
+
+It is two steps rather than one on purpose. That tab is where the reference annotators are
+offered -- **ISEScan**, if it is installed -- and those are worth ticking *now*: predicting the
+genome's insertion sequences before any reads are called against it is what lets breseq call an
+IS insertion as one MOB instead of two junctions, and running ISEScan afterwards cannot go back
+and change calls that have already been made. A button here that imported the genome by itself
+had no boxes to offer and so ran none of them.
+
+When the row names an assembly, **every sequence the assembly is made of** is imported -- the
+chromosome and its plasmids -- which is what breseq wants. Once the import finishes, this tab
+is no longer offered.
 
 A row whose match is one contig of a draft assembly, and for which NCBI lists no assembly,
 offers no button: importing that one contig would establish a reference missing almost all of

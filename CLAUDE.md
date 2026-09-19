@@ -15,8 +15,9 @@ no reference genome. Drop one FASTQ, or type an SRA accession; the first 16 MiB 
 drop's head, uploaded by the page, or an ENA file's head, fetched by the worker — is handed
 to BBTools' `sendsketch.sh`, which sends a MinHash sketch of it to JGI's RefSeq sketch server
 and gets back the ten nearest strains with an ANI for each. Each hit's taxid is turned into a
-RefSeq assembly accession at NCBI Datasets, and **Use as reference** imports that assembly
-through core's own accession import, after which the tab leaves the strip.
+RefSeq assembly accession at NCBI Datasets, and **Use as reference** hands that accession to
+the Reference Sequence tab's box — where the reference annotators are offered and the person
+presses Import. The tab leaves the strip once the genome lands.
 
 ---
 
@@ -227,12 +228,38 @@ with its own sentence and re-raises, as every task in the suite does. A sketch t
 matched nothing is a **finished** run with an empty table and a `note`: it is an answer, and
 the page shows it as one.
 
-### "Use as reference" is core's importer, driven from the page
+### "Use as reference" hands the accession to core's page
 
-There is no server code for it here. `page.js` makes the two calls the Reference Sequence
-tab's accession box makes — `mutintUpload([], {importType: "reference", accessions})`, then
-`POST /import/uploads/<id>/finalize` — so permission, the lock and a busy importer are all
-core's answers, and the genome arrives exactly as a typed accession would.
+There is no server code for it here, and there never was. What changed is where it goes.
+`page.js` navigates to `/import/?experiment_id=<id>&tab=reference&accession=<acc>`, and core's
+`accession_prefill` puts the value in the box a person would have typed it into; they press
+Import there.
+
+**It used to make the import itself**, with the two calls that box makes —
+`mutintUpload([], {importType: "reference", accessions})` then the finalize — and the reason
+it no longer does is the one thing that shape could not carry. Those two reference tabs are
+where the registered annotators are offered, and a POST from here had no boxes to tick, so it
+sent `{annotators: {}}`. This page is offered **only while an experiment has no reference**,
+which makes it the one path that knows for certain the genome is arriving for the first time
+— and it was therefore also the one path that silently skipped every annotator. ISEScan is
+the one that matters: an IS insertion called before the merge is two junctions, and no
+re-annotation afterwards turns it into a MOB.
+
+Everything else is unchanged by the move: permission, the lock and a busy importer are still
+core's answers, and the genome still arrives exactly as a typed accession would.
+
+**The confirm dialog went with it**, following the house rule rather than dropping one: which
+dialog a control gets is decided by whether the person can undo it themselves, and a navigation
+is undone with Back. The commitment is now the Import button on the tab it lands on. What the
+dialog *knew* is this plugin's and nothing on core's page has it — that an assembly brings
+every sequence it is made of, plasmids included, and that this tab closes once there is a
+reference — so it is a standing sentence under the hits table instead of a per-row warning
+at the moment of pressing. `page.html` loads no sweetalert any more, that having been its only
+caller.
+
+`&tab=reference` is named explicitly and must stay: `import_view` redirects a *bare* visit to
+whichever tab the reader used last, building that URL from the registry, which would not carry
+`?accession=`.
 
 ---
 
@@ -250,7 +277,7 @@ core's answers, and the genome arrives exactly as a typed accession would.
 
 ## Tests
 
-103 tests. Once the plugin is a submodule of `mutint`:
+109 tests. Once the plugin is a submodule of `mutint`:
 
 ```bash
 cd mutint && ./mutint test mutint_refsniff
