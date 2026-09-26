@@ -33,7 +33,6 @@ what says whether the run worked.
 """
 
 import json
-import os
 
 from django.conf import settings
 
@@ -57,11 +56,6 @@ HEAP = '1g'
 
 #: Where the run's answer is written, inside the run's own directory.
 SKETCH_FILENAME = 'sketch.json'
-
-#: Where bioconda's `openjdk` puts the JVM inside the tools prefix. **Not** `bin/`: that
-#: package installs nothing there at all and relies on a conda *activation script* to export
-#: `JAVA_HOME`, which nothing in this suite runs. See `tool_environment`.
-JVM_DIR = os.path.join('lib', 'jvm')
 
 DEFAULT_TIMEOUT_SECONDS = 10 * 60
 
@@ -91,42 +85,6 @@ def available():
 
 def timeout_seconds():
     return getattr(settings, 'MUTINT_REFSNIFF_TIMEOUT_SECONDS', DEFAULT_TIMEOUT_SECONDS)
-
-
-def tool_environment(env=None):
-    """`env` with the managed tools directory -- **and its JVM** -- first on PATH.
-
-    The tools-directory half is `mutint_isescan.runner`'s, copied; three producers is the
-    argument for lifting that into `mutint_common.tools`, which nobody has done.
-
-    **The JVM half is this plugin's and is the part that is easy to get wrong.**
-    `sendsketch.sh` is a shell wrapper that ends in a bare `java`, and bioconda's `openjdk`
-    puts **nothing** in the prefix's `bin/` -- the JVM is at `lib/jvm/bin/java` and conda
-    exports `JAVA_HOME` from an *activation script*, which `run_tool` does not run. So
-    prepending `env/tools/bin` alone provisions everything except the one binary the tool
-    actually executes, and the run then succeeds or fails on whether the **host** happens to
-    have a `java`. It does on a developer Mac (`/usr/bin/java`), which is precisely why this
-    cannot be left to be noticed later: bbmap needs 17+, and a host with 8, or with none, is
-    a failure no test on a machine that has one would ever show.
-
-    So the JVM's `bin` goes on PATH too, ahead of the host's, and `JAVA_HOME` and
-    `JAVA_LD_LIBRARY_PATH` are set to what `openjdk_activate.sh` would have set them to.
-    Gated on the directory existing, so a prefix without bbmap leaves a host's own `JAVA_HOME`
-    alone rather than pointing it at nothing.
-    """
-    env = dict(os.environ if env is None else env)
-    directory = tools.tools_dir()
-    if not directory:
-        return env
-    entries = [os.path.join(directory, 'bin')]
-    jvm = os.path.join(directory, JVM_DIR)
-    if os.path.isdir(os.path.join(jvm, 'bin')):
-        entries.append(os.path.join(jvm, 'bin'))
-        env['JAVA_HOME'] = jvm
-        env['JAVA_LD_LIBRARY_PATH'] = os.path.join(jvm, 'lib', 'server')
-    existing = env.get('PATH', '')
-    env['PATH'] = os.pathsep.join(entries + ([existing] if existing else []))
-    return env
 
 
 def build_argv(sendsketch, reads_path, out_path, records=RECORDS, heap=HEAP):

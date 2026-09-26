@@ -20,7 +20,7 @@ import subprocess
 from django.tasks import task
 from django.utils import timezone
 
-from mutint_common import store
+from mutint_common import store, tools
 from mutint_common.tools import ToolMissing
 from mutint_import import sra_fetch
 from mutint_jobs import jobs, logs, processes
@@ -151,7 +151,7 @@ def run_refsniff(context, run_id):
         argv = sketch.build_argv(sendsketch, run.reads_path(), run.sketch_path())
         try:
             returncode = processes.run_tool(
-                argv, log, env=sketch.tool_environment(), timeout=sketch.timeout_seconds(),
+                argv, log, env=tools.tool_environment(), timeout=sketch.timeout_seconds(),
                 is_cancelled=lambda: jobs.is_cancelled(queue_id), what="sendsketch")
         except processes.Cancelled:
             _cancelled(run, log=_tail(queue_id, run))

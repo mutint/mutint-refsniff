@@ -94,9 +94,11 @@ def fake_run_tool(text=SHORT, returncode=0, write=True, raises=None):
     Records the argv of every call in `calls`.
     """
     calls = []
+    envs = []
 
     def run_tool(argv, log, env=None, timeout=None, is_cancelled=None, **kwargs):
         calls.append(argv)
+        envs.append(env)
         # The real thing polls this while the tool runs; a fake that never asks would let a
         # cancellation test pass for the wrong reason.
         if is_cancelled is not None and is_cancelled():
@@ -109,6 +111,7 @@ def fake_run_tool(text=SHORT, returncode=0, write=True, raises=None):
         return returncode
 
     run_tool.calls = calls
+    run_tool.envs = envs
     return run_tool
 
 

@@ -47,6 +47,26 @@ class RunTestCase(RefsniffFixture):
         self.assertIn("address=refseq", argv)
         self.assertIn("level=1", argv)
 
+    def test_sendsketch_runs_on_the_provisioned_jvm(self):
+        """`sendsketch.sh` ends in a bare `java`, and bioconda's openjdk puts none in the
+        prefix's bin/. Core's `tool_environment` is what puts it on PATH; this pins that the
+        task is the one using it -- on a machine with a host java nothing else would notice."""
+        import shutil
+        import tempfile
+        from django.test import override_settings
+
+        tools_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tools_dir, True)
+        jvm = os.path.join(tools_dir, "lib", "jvm")
+        os.makedirs(os.path.join(jvm, "bin"))
+        with override_settings(MUTINT_TOOLS_DIR=tools_dir):
+            _run, run_tool = self._run()
+
+        env = run_tool.envs[0]
+        self.assertEqual(jvm, env["JAVA_HOME"])
+        self.assertEqual([os.path.join(tools_dir, "bin"), os.path.join(jvm, "bin")],
+                         env["PATH"].split(os.pathsep)[:2])
+
     def test_each_hit_carries_what_use_as_reference_would_import(self):
         run, _run_tool = self._run()
         by_name = {hit["name"]: hit for hit in run.hits}

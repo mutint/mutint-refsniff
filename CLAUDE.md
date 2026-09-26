@@ -97,20 +97,19 @@ too; it is core's.)
 script that nothing here runs -- `processes.run_tool` runs an argv with an env, not an
 activated environment. `sendsketch.sh` is a shell wrapper that ends in a bare `java`.
 
-So the `tool_environment()` every other component in the suite copies -- prepend
-`<prefix>/bin` -- puts everything on PATH *except the one binary the tool executes*, and the
-run then turns on whether the host happens to have a `java`. **A developer Mac has one**
-(`/usr/bin/java`, Java 17), so that version works locally and fails on a clean machine, or
-silently uses a host Java 8 that bbmap needs 17+ to beat. This was found by looking at what
+So prepending `<prefix>/bin` alone puts everything on PATH *except the one binary the tool
+executes*, and the run then turns on whether the host happens to have a `java`. **A developer
+Mac has one** (`/usr/bin/java`, Java 17), so that works locally and fails on a clean machine,
+or silently uses a host Java 8 that bbmap needs 17+ to beat. This was found by looking at what
 the package installed (`conda-meta/openjdk-*.json` lists no `bin/` entry), not by a test: a
 test on a machine with a system JDK cannot show it.
 
-`sketch.tool_environment` therefore adds `<prefix>/lib/jvm/bin` to PATH as well and sets
-`JAVA_HOME` and `JAVA_LD_LIBRARY_PATH` to what `openjdk_activate.sh` would have --
-`test_sketch.ToolEnvironmentTestCase` pins all of it, against a fake prefix, so it is
-asserted on a machine with a system Java and on one without alike. Verified live:
-`shutil.which('java', path=tool_environment()['PATH'])` resolves to the provisioned JDK,
-and the run is exit 0.
+The task runs sendsketch under **core's** `mutint_common.tools.tool_environment()`, which adds
+`<prefix>/lib/jvm/bin` to PATH and sets `JAVA_HOME` and `JAVA_LD_LIBRARY_PATH` to what
+`openjdk_activate.sh` would have. Core's `test_tools` pins what it builds, and
+`test_run.test_sendsketch_runs_on_the_provisioned_jvm` pins that this task is the one using
+it. Verified live: `shutil.which('java', path=tool_environment()['PATH'])` resolves to the
+provisioned JDK, and the run is exit 0.
 
 ### A truncated gzip is expected and prints a traceback
 

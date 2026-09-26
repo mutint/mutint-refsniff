@@ -1,10 +1,6 @@
 """sendsketch's command line, and reading what it wrote -- on a real run's real output."""
 
 import json
-import os
-import shutil
-import tempfile
-from unittest import mock
 
 from django.test import SimpleTestCase
 
@@ -140,51 +136,3 @@ class ImportAccessionTestCase(SimpleTestCase):
         missing almost all of the genome."""
         self.assertEqual("", sketch.import_accession(
             {"assembly": "", "accession": "NZ_1", "draft": True}))
-
-
-class ToolEnvironmentTestCase(SimpleTestCase):
-    """What `sendsketch.sh` is handed to run `java` with.
-
-    The point of these is one failure that a machine with a system JDK cannot show: bioconda's
-    `openjdk` installs **nothing** into the prefix's `bin/`, so putting `env/tools/bin` on
-    PATH -- which is all every other component in the suite needs -- leaves the tool running
-    whatever `java` the host happens to have, or none.
-    """
-
-    def setUp(self):
-        self.tools = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, self.tools, True)
-        os.makedirs(os.path.join(self.tools, "bin"))
-
-    def _with_jvm(self):
-        os.makedirs(os.path.join(self.tools, sketch.JVM_DIR, "bin"))
-
-    def _environment(self, env):
-        with mock.patch.object(sketch.tools, "tools_dir", return_value=self.tools):
-            return sketch.tool_environment(env)
-
-    def test_the_provisioned_jvm_is_on_path_ahead_of_the_hosts(self):
-        self._with_jvm()
-        env = self._environment({"PATH": "/usr/bin"})
-        entries = env["PATH"].split(os.pathsep)
-        self.assertEqual([os.path.join(self.tools, "bin"),
-                          os.path.join(self.tools, sketch.JVM_DIR, "bin"),
-                          "/usr/bin"], entries)
-
-    def test_java_home_is_what_condas_activation_script_would_have_set(self):
-        self._with_jvm()
-        env = self._environment({})
-        self.assertEqual(os.path.join(self.tools, sketch.JVM_DIR), env["JAVA_HOME"])
-        self.assertEqual(os.path.join(self.tools, sketch.JVM_DIR, "lib", "server"),
-                         env["JAVA_LD_LIBRARY_PATH"])
-
-    def test_without_a_provisioned_jvm_the_hosts_java_home_is_left_alone(self):
-        env = self._environment({"JAVA_HOME": "/host/jdk", "PATH": "/usr/bin"})
-        self.assertEqual("/host/jdk", env["JAVA_HOME"])
-        self.assertEqual([os.path.join(self.tools, "bin"), "/usr/bin"],
-                         env["PATH"].split(os.pathsep))
-
-    def test_with_no_tools_directory_the_environment_is_unchanged(self):
-        with mock.patch.object(sketch.tools, "tools_dir", return_value=""):
-            self.assertEqual({"PATH": "/usr/bin"},
-                             sketch.tool_environment({"PATH": "/usr/bin"}))
