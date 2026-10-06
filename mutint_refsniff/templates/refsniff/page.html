@@ -4,9 +4,7 @@
 
 {% block title %}Identify Reference from Reads — {{ experiment.name }}{% endblock %}
 
-{% block header %}
-    <b>{{ experiment.name }}</b> &mdash; Import data
-{% endblock %}
+{% block header %}{% include "experiment_header.html" with project_id=experiment.project_id project_name=experiment.project.name name=experiment.name page="Identify reference" %}{% endblock %}
 
 {% block content %}
 {% comment %} This page is one tab of the Import data page, so it wears the same strip core's
